@@ -1,37 +1,49 @@
 #pragma once
 
 #include <Arduino_GFX_Library.h>
-#include <TouchDrvCSTXXX.hpp>
-#include <XPowersLib.h>
-#include <SensorQMI8658.hpp>
-#include <Wire.h>
+#include <XPT2046_Touchscreen.h>
+#include <SPI.h>
 
 // ---- Display resolution ----
-#define LCD_WIDTH   480
-#define LCD_HEIGHT  480
+#define LCD_WIDTH   320
+#define LCD_HEIGHT  240
 
-// ---- QSPI display pins (CO5300) ----
-#define LCD_CS      12
-#define LCD_SCLK    38
-#define LCD_SDIO0   4
-#define LCD_SDIO1   5
-#define LCD_SDIO2   6
-#define LCD_SDIO3   7
-#define LCD_RESET   2
+// ---- ILI9341 display SPI pins (ESP32 CYD — HSPI bus) ----
+#define LCD_CS    15
+#define LCD_DC     2
+#define LCD_RST   GFX_NOT_DEFINED  // not wired on CYD
+#define LCD_MOSI  13
+#define LCD_MISO  GFX_NOT_DEFINED  // write-only display
+#define LCD_SCLK  14
+#define LCD_BL    21  // backlight, active HIGH via level shifter
 
-// ---- Touch pins (CST9220 via I2C) ----
-#define IIC_SDA     15
-#define IIC_SCL     14
-#define TP_INT      11
-#define TP_RST      2    // shared with LCD_RESET
-#define CST9220_ADDR 0x5A
+// ---- XPT2046 touch SPI pins (ESP32 CYD — VSPI bus, separate from display) ----
+#define TOUCH_CS   33
+#define TOUCH_CLK  25
+#define TOUCH_MOSI 32
+#define TOUCH_MISO 39
+#define TOUCH_IRQ  36
 
-// ---- PMU (AXP2101 via same I2C) ----
-#define AXP2101_ADDR 0x34
+// ---- Touch calibration (landscape, ILI9341 rotation=1) ----
+// Adjust if touch is misaligned: raw range is ~200–3900 per axis.
+// Default values work for most CYD units in landscape mode.
+#define TOUCH_X_MIN  200
+#define TOUCH_X_MAX  3800
+#define TOUCH_Y_MIN  300
+#define TOUCH_Y_MAX  3700
+
+// ---- Physical buttons ----
+#define BTN_LEFT   35   // left physical button
+#define BTN_RIGHT  34   // right physical button
+// BTN_MID = GPIO 0 (boot button), polled in power.cpp
+
+// ---- RGB LED (active LOW, common anode — kept off by default) ----
+#define LED_R   4
+#define LED_G  16
+#define LED_B  17
 
 // ---- Global hardware objects (defined in main.cpp) ----
 extern Arduino_DataBus *bus;
-extern Arduino_CO5300 *gfx;
-extern TouchDrvCST92xx touch;
-extern XPowersPMU pmu;
-extern SensorQMI8658 imu;
+extern Arduino_ILI9341 *gfx;
+extern XPT2046_Touchscreen touch;
+extern SPIClass touchSPI;
