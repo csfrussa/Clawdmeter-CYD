@@ -4,7 +4,7 @@
 #include "display_cfg.h"
 #include "data.h"
 #include "ui.h"
-#include "ble.h"
+// #include "ble.h"  // BLE disabled — not enough DRAM on CYD alongside WiFi
 #include "power.h"
 #include "imu.h"
 #include "splash.h"
@@ -51,10 +51,10 @@ static void touch_read() {
     touch_y = (uint16_t)y;
 }
 
-// ---- LVGL draw buffers (static SRAM — no PSRAM on CYD) ----
+// ---- LVGL draw buffers (heap-allocated to avoid BSS overflow) ----
 #define BUF_LINES 10
-static uint16_t buf1[LCD_WIDTH * BUF_LINES];
-static uint16_t buf2[LCD_WIDTH * BUF_LINES];
+static uint16_t* buf1 = nullptr;
+static uint16_t* buf2 = nullptr;
 
 static uint32_t my_tick(void) { return millis(); }
 
@@ -117,21 +117,21 @@ void setup() {
     touch.begin(touchSPI);
     touch.setRotation(1);
 
-    // Init BLE HID keyboard
-    ble_init();
-
     // Init WiFi + MQTT — may block while WiFiManager portal is open.
     // Draws raw-GFX boot screen internally.
     wifi_mqtt_init();
 
     // Init LVGL
+    buf1 = (uint16_t*)malloc(LCD_WIDTH * BUF_LINES * sizeof(uint16_t));
+    buf2 = (uint16_t*)malloc(LCD_WIDTH * BUF_LINES * sizeof(uint16_t));
+
     lv_init();
     lv_tick_set_cb(my_tick);
 
     lv_display_t* disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(disp, my_flush_cb);
-    lv_display_set_buffers(disp, buf1, buf2, sizeof(buf1),
+    lv_display_set_buffers(disp, buf1, buf2, LCD_WIDTH * BUF_LINES * sizeof(uint16_t),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     lv_indev_t* indev = lv_indev_create();
@@ -162,33 +162,21 @@ void loop() {
     touch_read();
     lv_timer_handler();
     ui_tick_anim();
-    ble_tick();
     power_tick();
     imu_tick();
     splash_tick();
     wifi_mqtt_poll();
 
-    // Left button → Space (voice-mode push-to-talk)
-    // Right button → Shift+Tab (mode toggle)
+    // Physical buttons
     {
-        static bool left_was = false, right_was = false;
-        bool left_now  = (digitalRead(BTN_LEFT)  == LOW);
-        bool right_now = (digitalRead(BTN_RIGHT) == LOW);
-
-        if (left_now != left_was) {
-            if (left_now) ble_keyboard_press(0x2C, 0);      // HID Space
-            else          ble_keyboard_release();
-            left_was = left_now;
-        }
-        if (right_now != right_was) {
-            if (right_now) ble_keyboard_press(0x2B, 0x02);  // HID Tab + LEFT_SHIFT
-            else           ble_keyboard_release();
-            right_was = right_now;
-        }
-
+        // Mid button short press: cycle screens / animations
         if (power_pwr_pressed()) {
             if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
             else                                          ui_cycle_screen();
+        }
+        // Mid button held 5 s: open WiFiManager portal to reconfigure WiFi/MQTT
+        if (power_pwr_long_held()) {
+            wifi_mqtt_start_config_portal();
         }
     }
 

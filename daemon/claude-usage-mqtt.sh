@@ -12,10 +12,14 @@
 # Configuration (env vars, all optional):
 #   MQTT_BROKER   — broker hostname or IP  (default: localhost)
 #   MQTT_PORT     — broker port            (default: 1883)
+#   MQTT_USER     — username for authentication (default: empty)
+#   MQTT_PASS     — password for authentication (default: empty)
 #   POLL_INTERVAL — seconds between polls  (default: 60)
 
 MQTT_BROKER="${MQTT_BROKER:-localhost}"
 MQTT_PORT="${MQTT_PORT:-1883}"
+MQTT_USER="${MQTT_USER:-}"
+MQTT_PASS="${MQTT_PASS:-}"
 TOPIC_USAGE="clawdmeter/usage"
 TOPIC_REQUEST="clawdmeter/request"
 POLL_INTERVAL="${POLL_INTERVAL:-60}"
@@ -24,6 +28,11 @@ REFRESH_FLAG="/tmp/claude-usage-mqtt-refresh-$$"
 SUB_PID=""
 
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
+
+# Build auth flags for mosquitto_pub / mosquitto_sub
+mqtt_auth() {
+    [ -n "$MQTT_USER" ] && printf -- '-u %s -P %s' "$MQTT_USER" "$MQTT_PASS"
+}
 
 read_token() {
     grep -o '"accessToken":"[^"]*"' "$HOME/.claude/.credentials.json" \
@@ -75,6 +84,7 @@ poll_and_publish() {
     log "Publishing: $payload"
     mosquitto_pub \
         -h "$MQTT_BROKER" -p "$MQTT_PORT" \
+        $(mqtt_auth) \
         -t "$TOPIC_USAGE" -m "$payload" --retain \
         || { log "MQTT publish failed"; return 1; }
     return 0
@@ -86,6 +96,7 @@ poll_and_publish() {
 start_refresh_subscriber() {
     mosquitto_sub \
         -h "$MQTT_BROKER" -p "$MQTT_PORT" \
+        $(mqtt_auth) \
         -t "$TOPIC_REQUEST" 2>/dev/null | \
     while read -r _msg; do
         log "Refresh requested by device"

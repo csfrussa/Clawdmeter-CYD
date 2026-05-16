@@ -10,29 +10,50 @@
 #define TOPIC_REQUEST  "clawdmeter/request"
 #define MQTT_BUF_SIZE  512
 #define RECONNECT_MS   5000
-#define DEFAULT_BROKER "192.168.1.100"
-#define DEFAULT_PORT   1883
+#ifndef MQTT_DEFAULT_BROKER
+#define MQTT_DEFAULT_BROKER "192.168.1.100"
+#endif
+#ifndef MQTT_DEFAULT_USER
+#define MQTT_DEFAULT_USER ""
+#endif
+#ifndef MQTT_DEFAULT_PASS
+#define MQTT_DEFAULT_PASS ""
+#endif
+#define DEFAULT_PORT 1883
 
 static WiFiClient   wifi_client;
 static PubSubClient mqtt(wifi_client);
 static WiFiManager  wm;
 static Preferences  prefs;
 
-static char     broker_ip[64]  = DEFAULT_BROKER;
-static uint16_t broker_port    = DEFAULT_PORT;
+static char     broker_ip[64]   = MQTT_DEFAULT_BROKER;
+static uint16_t broker_port     = DEFAULT_PORT;
+static char     mqtt_user[64]   = "";
+static char     mqtt_pass[128]  = "";
 static char     mqtt_buf[MQTT_BUF_SIZE];
-static bool     data_ready     = false;
-static mqtt_state_t state      = MQTT_STATE_DISCONNECTED;
-static uint32_t last_reconnect = 0;
+static bool     data_ready      = false;
+static mqtt_state_t state       = MQTT_STATE_DISCONNECTED;
+static uint32_t last_reconnect  = 0;
 
-// Pointer to the WiFiManager custom parameter so save_params_cb can read it.
+// Pointers to WiFiManager custom parameters so save_params_cb can read them.
 static WiFiManagerParameter* p_broker_param = nullptr;
+static WiFiManagerParameter* p_user_param   = nullptr;
+static WiFiManagerParameter* p_pass_param   = nullptr;
 
 static void save_params_cb() {
-    if (!p_broker_param) return;
-    strlcpy(broker_ip, p_broker_param->getValue(), sizeof(broker_ip));
-    prefs.putString("broker", broker_ip);
-    Serial.printf("MQTT broker saved: %s\n", broker_ip);
+    if (p_broker_param) {
+        strlcpy(broker_ip, p_broker_param->getValue(), sizeof(broker_ip));
+        prefs.putString("broker", broker_ip);
+    }
+    if (p_user_param) {
+        strlcpy(mqtt_user, p_user_param->getValue(), sizeof(mqtt_user));
+        prefs.putString("mqtt_user", mqtt_user);
+    }
+    if (p_pass_param) {
+        strlcpy(mqtt_pass, p_pass_param->getValue(), sizeof(mqtt_pass));
+        prefs.putString("mqtt_pass", mqtt_pass);
+    }
+    Serial.printf("MQTT saved: broker=%s user=%s\n", broker_ip, mqtt_user);
 }
 
 static void mqtt_callback(char* topic, byte* payload, unsigned int len) {
@@ -45,7 +66,9 @@ static void mqtt_callback(char* topic, byte* payload, unsigned int len) {
 static bool mqtt_reconnect(void) {
     if (mqtt.connected()) { state = MQTT_STATE_CONNECTED; return true; }
     state = MQTT_STATE_CONNECTING;
-    if (mqtt.connect("ClawdmeterCYD")) {
+    const char* user = (mqtt_user[0] != '\0') ? mqtt_user : nullptr;
+    const char* pass = (mqtt_pass[0] != '\0') ? mqtt_pass : nullptr;
+    if (mqtt.connect("ClawdmeterCYD", user, pass)) {
         mqtt.subscribe(TOPIC_USAGE);
         state = MQTT_STATE_CONNECTED;
         mqtt.publish(TOPIC_REQUEST, "refresh");
@@ -77,15 +100,30 @@ static void draw_boot_screen(const char* line2) {
 
 void wifi_mqtt_init(void) {
     prefs.begin("clawdmeter", false);
-    strlcpy(broker_ip, prefs.getString("broker", DEFAULT_BROKER).c_str(), sizeof(broker_ip));
+    strlcpy(broker_ip,  prefs.getString("broker",    MQTT_DEFAULT_BROKER).c_str(), sizeof(broker_ip));
+    strlcpy(mqtt_user,  prefs.getString("mqtt_user", MQTT_DEFAULT_USER).c_str(),   sizeof(mqtt_user));
+    strlcpy(mqtt_pass,  prefs.getString("mqtt_pass", MQTT_DEFAULT_PASS).c_str(),   sizeof(mqtt_pass));
+    // Fall back to compiled defaults if NVS has empty or placeholder values
+    if (mqtt_user[0] == '\0') strlcpy(mqtt_user, MQTT_DEFAULT_USER, sizeof(mqtt_user));
+    if (mqtt_pass[0] == '\0') strlcpy(mqtt_pass, MQTT_DEFAULT_PASS, sizeof(mqtt_pass));
+    if (broker_ip[0] == '\0') strlcpy(broker_ip, MQTT_DEFAULT_BROKER, sizeof(broker_ip));
+    Serial.printf("MQTT config: broker=%s user=%s pass=%s\n",
+                  broker_ip, mqtt_user, mqtt_pass[0] ? "(set)" : "(empty)");
     broker_port = prefs.getUShort("port", DEFAULT_PORT);
 
-    // Custom portal parameter for MQTT broker IP
-    static WiFiManagerParameter param_broker("broker", "MQTT Broker IP", broker_ip, 63);
+    // Custom portal parameters
+    static WiFiManagerParameter param_broker("broker", "MQTT Broker IP",  broker_ip, 63);
+    static WiFiManagerParameter param_user  ("user",   "MQTT User",        mqtt_user, 63);
+    static WiFiManagerParameter param_pass  ("pass",   "MQTT Password",    mqtt_pass, 127);
     p_broker_param = &param_broker;
+    p_user_param   = &param_user;
+    p_pass_param   = &param_pass;
     wm.addParameter(&param_broker);
+    wm.addParameter(&param_user);
+    wm.addParameter(&param_pass);
     wm.setConfigPortalTimeout(180);
     wm.setSaveParamsCallback(save_params_cb);
+    wm.setSaveConfigCallback(save_params_cb);  // also fires on WiFi save page
 
     // Show what we're doing on the display before the potential blocking call
     draw_boot_screen("Connecting to WiFi...");
@@ -94,7 +132,12 @@ void wifi_mqtt_init(void) {
         draw_boot_screen("Open: Clawdmeter-Setup AP");
     });
 
-    if (!wm.autoConnect("Clawdmeter-Setup")) {
+    bool force_portal = prefs.getBool("force_portal", false);
+    if (force_portal) {
+        prefs.putBool("force_portal", false);
+        draw_boot_screen("Config portal: Clawdmeter-Setup");
+        wm.startConfigPortal("Clawdmeter-Setup");
+    } else if (!wm.autoConnect("Clawdmeter-Setup")) {
         Serial.println("WiFi: portal timeout — restarting");
         ESP.restart();
     }
@@ -136,6 +179,6 @@ const char* wifi_mqtt_get_data(void) {
 }
 
 void wifi_mqtt_start_config_portal(void) {
-    wm.resetSettings();
+    prefs.putBool("force_portal", true);
     ESP.restart();
 }
