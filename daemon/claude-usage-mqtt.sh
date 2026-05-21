@@ -27,6 +27,10 @@ TICK=5
 REFRESH_FLAG="/tmp/claude-usage-mqtt-refresh-$$"
 SUB_PID=""
 
+CREDS_FILE="$HOME/.claude/.credentials.json"
+OAUTH_CLIENT_ID="https://claude.ai/oauth/claude-code-client-metadata"
+TOKEN_ENDPOINT="https://platform.claude.com/v1/oauth/token"
+
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
 
 # Build auth flags for mosquitto_pub / mosquitto_sub
@@ -34,12 +38,84 @@ mqtt_auth() {
     [ -n "$MQTT_USER" ] && printf -- '-u %s -P %s' "$MQTT_USER" "$MQTT_PASS"
 }
 
+# Renews the OAuth access token using the refresh token when it's expired or
+# about to expire (within 5 min). Updates ~/.claude/.credentials.json in place.
+refresh_token_if_needed() {
+    local expires_at now_ms
+    expires_at=$(python3 -c "
+import json, sys
+try:
+    c = json.load(open('$CREDS_FILE'))
+    print(c['claudeAiOauth']['expiresAt'])
+except Exception as e:
+    sys.exit(1)
+") || { log "Warning: could not read token expiry"; return 1; }
+
+    now_ms=$(( $(date +%s) * 1000 ))
+    local margin_ms=$(( 5 * 60 * 1000 ))
+    if (( expires_at > now_ms + margin_ms )); then
+        return 0
+    fi
+
+    log "Token expirado ou expirando, renovando..."
+    local refresh_tok
+    refresh_tok=$(python3 -c "
+import json, sys
+try:
+    c = json.load(open('$CREDS_FILE'))
+    print(c['claudeAiOauth']['refreshToken'])
+except: sys.exit(1)
+") || { log "Error: sem refreshToken nas credenciais"; return 1; }
+
+    local tmp_resp
+    tmp_resp=$(mktemp)
+    curl -s -X POST "$TOKEN_ENDPOINT" \
+        -H "Content-Type: application/json" \
+        -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"${refresh_tok}\",\"client_id\":\"${OAUTH_CLIENT_ID}\"}" \
+        -o "$tmp_resp" || { log "Error: falha ao chamar endpoint de refresh"; rm -f "$tmp_resp"; return 1; }
+
+    python3 - "$tmp_resp" "$CREDS_FILE" <<'PYEOF'
+import json, sys, time
+
+resp_file, creds_file = sys.argv[1], sys.argv[2]
+try:
+    with open(resp_file) as f:
+        resp = json.load(f)
+except Exception as e:
+    print(f"Error: resposta inválida do endpoint: {e}", file=sys.stderr)
+    sys.exit(1)
+
+if "access_token" not in resp:
+    print(f"Error: {resp}", file=sys.stderr)
+    sys.exit(1)
+
+with open(creds_file) as f:
+    creds = json.load(f)
+
+creds["claudeAiOauth"]["accessToken"] = resp["access_token"]
+if "refresh_token" in resp:
+    creds["claudeAiOauth"]["refreshToken"] = resp["refresh_token"]
+if "expires_in" in resp:
+    creds["claudeAiOauth"]["expiresAt"] = int((time.time() + resp["expires_in"]) * 1000)
+
+with open(creds_file, "w") as f:
+    json.dump(creds, f, indent=2)
+
+print("Token renovado com sucesso")
+PYEOF
+    local rc=$?
+    rm -f "$tmp_resp"
+    [ $rc -eq 0 ] && log "Token renovado." || log "Error: falha ao salvar token renovado"
+    return $rc
+}
+
 read_token() {
-    grep -o '"accessToken":"[^"]*"' "$HOME/.claude/.credentials.json" \
+    grep -o '"accessToken":"[^"]*"' "$CREDS_FILE" \
         | cut -d'"' -f4
 }
 
 poll_and_publish() {
+    refresh_token_if_needed
     local token
     token=$(read_token) || { log "Error: could not read token"; return 1; }
     local now
