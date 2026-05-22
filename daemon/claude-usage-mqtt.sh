@@ -70,8 +70,10 @@ except: sys.exit(1)
     local tmp_resp
     tmp_resp=$(mktemp)
     curl -s -X POST "$TOKEN_ENDPOINT" \
-        -H "Content-Type: application/json" \
-        -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"${refresh_tok}\",\"client_id\":\"${OAUTH_CLIENT_ID}\"}" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "grant_type=refresh_token" \
+        --data-urlencode "refresh_token=${refresh_tok}" \
+        --data-urlencode "client_id=${OAUTH_CLIENT_ID}" \
         -o "$tmp_resp" || { log "Error: falha ao chamar endpoint de refresh"; rm -f "$tmp_resp"; return 1; }
 
     python3 - "$tmp_resp" "$CREDS_FILE" <<'PYEOF'
