@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /home/frussa/Clawdmeter-CYD/daemon/claude-usage-mqtt.sh
+ExecStart=/bin/bash */Clawdmeter-CYD/daemon/claude-usage-mqtt.sh
 Restart=on-failure
 RestartSec=10
-Environment=MQTT_BROKER=192.168.0.40
-Environment=MQTT_USER=homeassistant
-Environment=MQTT_PASS=aiyee8gi5Nahn3banahg6ohL1kohXuLooreec2nei2woh1Beevoov6Voh5Thoof7
+Environment=MQTT_BROKER=x.x.x.x
+Environment=MQTT_USER=
+Environment=MQTT_PASS=
 
 [Install]
 WantedBy=default.target
