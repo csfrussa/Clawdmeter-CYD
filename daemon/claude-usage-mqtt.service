@@ -5,12 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash */Clawdmeter-CYD/daemon/claude-usage-mqtt.sh
+ExecStart=/bin/bash %h/Clawdmeter-CYD/daemon/claude-usage-mqtt.sh
 Restart=on-failure
 RestartSec=10
-Environment=MQTT_BROKER=x.x.x.x
-Environment=MQTT_USER=
-Environment=MQTT_PASS=
+Environment=MQTT_BROKER=192.168.0.40
+# MQTT_USER / MQTT_PASS ficam FORA do repo (repo público).
+# Crie o arquivo a partir de daemon/mqtt.env.example e rode: chmod 600 <arquivo>
+EnvironmentFile=%h/.config/claude-usage-monitor/mqtt.env
 
 [Install]
 WantedBy=default.target

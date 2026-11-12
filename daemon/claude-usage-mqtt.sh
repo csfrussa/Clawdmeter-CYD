@@ -112,8 +112,15 @@ PYEOF
 }
 
 read_token() {
-    grep -o '"accessToken":"[^"]*"' "$CREDS_FILE" \
-        | cut -d'"' -f4
+    # Lê o token do claudeAiOauth. Um grep simples pegaria a primeira entrada
+    # "accessToken" do arquivo, que pode ser de um conector MCP (mcpOAuth) e vazia.
+    python3 -c '
+import json, sys
+t = json.load(open(sys.argv[1]))["claudeAiOauth"]["accessToken"]
+if not t:
+    sys.exit(1)
+print(t)
+' "$CREDS_FILE"
 }
 
 poll_and_publish() {
